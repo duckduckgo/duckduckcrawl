@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse, logging, urllib.parse, urllib.request
+import argparse, logging, urllib.parse
+import httplib2
 import ddc_process
 
 
 class DistributedCrawlerClient():
 
   PROTOCOL_VERSION = 1
-  PROCESS_COMPONENT_VERSION = 1
+  PROCESSOR_COMPONENT_VERSION = 1
+  http_client = httplib2.Http(timeout=10,disable_ssl_certificate_validation=True)
 
   def __init__(self,server,port):
     self.base_url = "http://%s:%d/rest" % (server,port)
@@ -17,7 +19,7 @@ class DistributedCrawlerClient():
     # see README.md for params description
     response = self.request({ 'action'          : 'getdomains',
                               'version'         : str(self.PROTOCOL_VERSION),
-                              'pc_version'      : str(self.PROCESS_COMPONENT_VERSION) }).decode("utf-8")
+                              'pc_version'      : str(self.PROCESSOR_COMPONENT_VERSION) }).decode("utf-8")
     print(response)
 
   def request(self,params):
@@ -25,10 +27,7 @@ class DistributedCrawlerClient():
     url = "%s?%s" % (self.base_url,urllib.parse.urlencode(params))
     # send request
     logging.getLogger().debug("Fetching '%s' ..." % (url) )
-    response = urllib.request.urlopen(url)
-    # read response
-    content = response.read()
-    response.close()
+    response, content = self.http_client.request(url)
     return content
 
 
