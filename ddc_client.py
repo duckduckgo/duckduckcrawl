@@ -14,7 +14,7 @@ class DistributedCrawlerClient():
     self.base_url = "http://%s:%d/rest" % (server,port)
   
   def start(self,):
-    # see ddc_server.py for params description
+    # see README.md for params description
     response = self.request({ 'action'          : 'getdomains',
                               'version'         : str(self.PROTOCOL_VERSION),
                               'pc_version'      : str(self.PROCESS_COMPONENT_VERSION) }).decode("utf-8")
