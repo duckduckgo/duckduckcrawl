@@ -34,7 +34,7 @@ When a client has done it's job, it sends the server the same 'domainlist' node 
  * ddc_client.py : Code for a crawling worker
  * ddc_process.py : This file contains the code that simulates the binary component, currently it returns dumb results just to simulate
  * ddc_server.py : Code for the server that distributes the crawling work to the clients and gets the result from them
- * test.sh : Bash script to do a small simulation by lanching the server and connecting a client to it
+ * test_1client.sh : Bash script to do a small simulation by lanching the server and connecting a client to it
 
 ## Dependencies
 

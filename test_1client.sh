@@ -4,15 +4,16 @@ cd "$(dirname -- $0)"
 
 # start server
 ./ddc_server.py -p 10001 &
-server_pid=$?
+server_job_id=$?
 
 # wait a bit to be sure the server is ready
 sleep 1s
 
 # start client
 ./ddc_client.py -s 127.0.0.1 -p 10001 &
-client_pid=$?
+client_job_id=$?
 
-# kill server after X s
+# kill both after X s
 sleep 10s
-kill $server_pid
+kill $client_job_id
+kill $server_job_id
