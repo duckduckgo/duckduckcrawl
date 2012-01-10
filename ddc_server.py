@@ -27,7 +27,7 @@ class XmlMessage:
     # TODO enforce redundancy of spam checks: a domain must be checked by at least X clients
 
     if (domains_to_send_count < self.MAX_DOMAIN_LIST_SIZE) and DistributedCrawlerServer.pending_domains:
-      # if, no more domains to check, (re)check pending domains (a client might not have responded)
+      # if no more domains to check, (re)check pending domains (a client might not have responded)
       additional_domains_to_send_count = min(len(DistributedCrawlerServer.pending_domains),self.MAX_DOMAIN_LIST_SIZE-domains_to_send_count)
       for i in range(additional_domains_to_send_count):
         domain = DistributedCrawlerServer.pending_domains[0] # this time we pick the first one because it's a queue
@@ -79,6 +79,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
       if parsed_url.path == "/upgrade":
         # serve file (might short-circuit that part with an Apache/Nginx URL rediretion directly to the static content)
+        # TODO
         pass
 
       elif parsed_url.path == "/rest":
@@ -183,6 +184,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       # boom!
       self.send_error(500)
       raise
+
 
 if __name__ == "__main__":
 
