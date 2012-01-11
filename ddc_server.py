@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse, gzip, http.server, logging, random, string, urllib.parse, xml.etree.ElementTree, zlib
+import argparse, gzip, http.server, logging, os.path, random, string, urllib.parse, xml.etree.ElementTree, zlib
+import ddc_process # just to get the version
 
 
 class XmlMessage:
 
-  MAX_DOMAIN_LIST_SIZE = 5
+  MAX_DOMAIN_LIST_SIZE = 5 # TODO fix bug ie when this is set to 20
 
   def __init__(self,protocol_version,page_processor_version):
     self.xml = xml.etree.ElementTree.Element("ddc")
 
-    # TODO generate upgrade nodes
+    # generate upgrade nodes
+    xml_upgrade = xml.etree.ElementTree.SubElement(self.xml,"upgrades")
+    if protocol_version < DistributedCrawlerServer.LAST_PROTOCOL_VERSION:
+      # need to upgrade the client
+      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
+                                                                      "url"   : "/upgrade?file=client-v%d.zip" % (DistributedCrawlerServer.LAST_PROTOCOL_VERSION) })
+    if page_processor_version < ddc_process.VERSION:
+      # need to upgrade the page processing component
+      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
+                                                                      "url"   : "/upgrade?file=page-processor-v%d.zip" % (ddc_process.VERSION) })
 
     # generate domain list nodes
     xml_domain_list = xml.etree.ElementTree.SubElement(self.xml,"domainlist")
@@ -68,24 +78,41 @@ class DistributedCrawlerServer(http.server.HTTPServer):
 
 class RequestHandler(http.server.BaseHTTPRequestHandler):
 
+  # TODO replace all the redundant log/send_error blocks with exceptions
+
   # override some useful http.server.BaseHTTPRequestHandler attributes
   server_version = "DDC_Server/%d" % (DistributedCrawlerServer.LAST_PROTOCOL_VERSION)
   protocol_version = "HTTP/1.1"
 
   def do_GET(self):
     try:
-      # parse request url
+      # parse request url & url parameters
       parsed_url = urllib.parse.urlsplit(self.path)
+      params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
 
       if parsed_url.path == "/upgrade":
+        # check query is well formed
+        if "file" not in params or \
+            not self.is_safe_filename(params["files"][0]): # we check for evil injection here
+          logging.getLogger().warning("Invalid query parameters for URL '%s'" % (self.path) ) 
+          self.send_error(400)
+
         # serve file (might short-circuit that part with an Apache/Nginx URL rediretion directly to the static content)
-        # TODO
-        pass
+        upgrade_file = params["files"][0]
+        try:
+          with open(upgrade_file,"rb") as file_handle:
+            # send http headers
+            self.send_response(200)
+            self.send_header("Content-Type",      "application/zip")
+            self.send_header("Content-Length",    file_size)
+            self.end_headers()
+            # send file
+            self.wfile.write(file_handle.read())
+        except IOError:
+          logging.getLogger().warning("Upgrade file '%s' does not exist or is not readable" % (upgrade_file) ) 
+          self.send_error(400)
 
       elif parsed_url.path == "/rest":
-        # parse url parameters
-        params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
-
         # check query is well formed
         if "action" not in params or \
             params["action"][0] != "getdomains" or \
@@ -184,6 +211,18 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       # boom!
       self.send_error(500)
       raise
+
+  def is_safe_filename(self,filename):
+    # ensure a filename has the form XXX.XX, with no slashes, double dots, etc. to protect from injection
+    safe_chars = frozenset(string.ascii_letters + string.digits + "-")
+    components = filename.split(".")
+    if len(components) != 2:
+      return False
+    for component in components:
+      for char in component:
+        if char not in safe_chars:
+          return False
+    return True
 
 
 if __name__ == "__main__":

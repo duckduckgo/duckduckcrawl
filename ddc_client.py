@@ -23,7 +23,7 @@ class DistributedCrawlerClient():
 
       # read response
       xml_response = xml.etree.ElementTree.fromstring(response)
-      xml_domains = xml_response.findall("domainlist/domain") # TODO use iterator
+      xml_domains = xml_response.findall("domainlist/domain")
       domain_count = len(xml_domains)
 
       # TODO look for an upgrade node and act accordingly
