@@ -23,7 +23,7 @@ class DistributedCrawlerClient():
 
       # read response
       xml_response = xml.etree.ElementTree.fromstring(response)
-      xml_domains = xml_response.findall("domainlist/domain")
+      xml_domains = xml_response.findall("domainlist/domain") # TODO use iterator
       domain_count = len(xml_domains)
 
       # TODO look for an upgrade node and act accordingly
@@ -43,13 +43,12 @@ class DistributedCrawlerClient():
         domains_state[i] = ddc_process.is_spam(domain)
         # TODO should add a special XML attribute for when a domain check fails (network, etc.)
 
-      # prepare POST request
-      # TODO we could lazily reuse the previous XML tree
+      # prepare POST request content
       xml_root = xml.etree.ElementTree.Element("ddc")
-      xml_domain_list = xml.etree.ElementTree.SubElement(xml_root,"domainlist")
-      for (xml_domain, is_spam) in zip(xml_domains,domains_state):
-        xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name" : xml_domain.get("name"),
-                                                                          "spam" : str(int(is_spam)) })
+      xml_domain_list = xml_response.find("domainlist") # reuse the previous XML domain list
+      for (xml_domain, is_spam) in zip(xml_domain_list.iterfind("domain"),domains_state):
+        xml_domain.set("spam",str(int(is_spam)))
+      xml_root.append(xml_domain_list)
 
       # send POST request
       post_data = xml.etree.ElementTree.tostring(xml_root)
