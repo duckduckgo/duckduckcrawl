@@ -9,15 +9,15 @@ class XmlMessage:
 
   MAX_DOMAIN_LIST_SIZE = 5 # TODO fix bug ie when this is set to 20
 
-  def __init__(self,protocol_version,page_processor_version):
+  def __init__(self,client_version,page_processor_version):
     self.xml = xml.etree.ElementTree.Element("ddc")
 
     # generate upgrade nodes
     xml_upgrade = xml.etree.ElementTree.SubElement(self.xml,"upgrades")
-    if protocol_version < DistributedCrawlerServer.LAST_PROTOCOL_VERSION:
+    if client_version < DistributedCrawlerServer.LAST_CLIENT_VERSION:
       # need to upgrade the client
       xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
-                                                                      "url"   : "/upgrade?file=client-v%d.zip" % (DistributedCrawlerServer.LAST_PROTOCOL_VERSION) })
+                                                                      "url"   : "/upgrade?file=client-v%d.zip" % (DistributedCrawlerServer.LAST_CLIENT_VERSION) })
     if page_processor_version < ddc_process.VERSION:
       # need to upgrade the page processing component
       xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
@@ -62,7 +62,7 @@ class XmlMessage:
 
 class DistributedCrawlerServer(http.server.HTTPServer):
 
-  LAST_PROTOCOL_VERSION = 1
+  LAST_CLIENT_VERSION = SERVER_PROTOCOL_VERSION = 1
 
   unchecked_domains = [ "domain%04d.com" % (i) for i in range(50) ] # we generate random domains for simulation
   pending_domains = []
@@ -81,7 +81,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
   # TODO replace all the redundant log/send_error blocks with exceptions
 
   # override some useful http.server.BaseHTTPRequestHandler attributes
-  server_version = "DDC_Server/%d" % (DistributedCrawlerServer.LAST_PROTOCOL_VERSION)
+  server_version = "DDC_Server/%d" % (DistributedCrawlerServer.SERVER_PROTOCOL_VERSION)
   protocol_version = "HTTP/1.1"
 
   def do_GET(self):

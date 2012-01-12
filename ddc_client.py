@@ -8,7 +8,7 @@ import ddc_process
 
 class DistributedCrawlerClient():
 
-  PROTOCOL_VERSION = 1
+  CLIENT_VERSION = 1
   http_client = httplib2.Http(timeout=10)
 
   def __init__(self,server,port):
@@ -18,7 +18,7 @@ class DistributedCrawlerClient():
     while True:
       # see README.md for params description
       response = self.request({ "action"          : "getdomains",
-                                "version"         : str(self.PROTOCOL_VERSION),
+                                "version"         : str(self.CLIENT_VERSION),
                                 "pc_version"      : str(ddc_process.VERSION) }).decode("utf-8")
 
       # read response
@@ -53,7 +53,7 @@ class DistributedCrawlerClient():
       # send POST request
       post_data = xml.etree.ElementTree.tostring(xml_root)
       self.request({ "action"     : "senddomainsdata",
-                     "version"    : str(self.PROTOCOL_VERSION),
+                     "version"    : str(self.CLIENT_VERSION),
                      "pc_version" : str(ddc_process.VERSION) },
                    True,
                    post_data) # we don't care for what the server actually returns here
