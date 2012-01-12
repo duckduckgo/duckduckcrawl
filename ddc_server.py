@@ -7,7 +7,7 @@ import ddc_process # just to get the version
 
 class XmlMessage:
 
-  MAX_DOMAIN_LIST_SIZE = 5 # TODO fix bug ie when this is set to 20
+  MAX_DOMAIN_LIST_SIZE = 20
 
   def __init__(self,client_version,page_processor_version):
     self.xml = xml.etree.ElementTree.Element("ddc")
@@ -25,31 +25,13 @@ class XmlMessage:
 
     # generate domain list nodes
     xml_domain_list = xml.etree.ElementTree.SubElement(self.xml,"domainlist")
-    domains_to_send_count = min(len(DistributedCrawlerServer.unchecked_domains),self.MAX_DOMAIN_LIST_SIZE)
+    domains_to_send_count = min(len(DistributedCrawlerServer.domains_to_check),self.MAX_DOMAIN_LIST_SIZE)
     for i in range(domains_to_send_count):
-      domain_index = random.randint(0,len(DistributedCrawlerServer.unchecked_domains)-1) # pick a random domain in the list
-      domain = DistributedCrawlerServer.unchecked_domains[domain_index]
+      domain = random.choice(DistributedCrawlerServer.domains_to_check) # pick a random domain in the list
       xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
-      del DistributedCrawlerServer.unchecked_domains[domain_index]
-      DistributedCrawlerServer.pending_domains.append(domain)
-      logging.getLogger().debug("Picked unchecked domain %s to be checked" % (domain) ) 
+      logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
 
-    # TODO enforce redundancy of spam checks: a domain must be checked by at least X clients
-
-    if (domains_to_send_count < self.MAX_DOMAIN_LIST_SIZE) and DistributedCrawlerServer.pending_domains:
-      # if no more domains to check, (re)check pending domains (a client might not have responded)
-      additional_domains_to_send_count = min(len(DistributedCrawlerServer.pending_domains),self.MAX_DOMAIN_LIST_SIZE-domains_to_send_count)
-      for i in range(additional_domains_to_send_count):
-        domain = DistributedCrawlerServer.pending_domains[0] # this time we pick the first one because it's a queue
-        xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
-        logging.getLogger().debug("Picked pending domain %s to be checked" % (domain) ) 
-    else:
-      additional_domains_to_send_count = 0
-
-    total_domains_to_send_count = domains_to_send_count + additional_domains_to_send_count
-    if total_domains_to_send_count:
-      logging.getLogger().debug("Picked %d domains to be checked" % (total_domains_to_send_count) )
-    else:
+    if not domains_to_send_count:
       logging.getLogger().warning("No more domains to be checked")
 
     # TODO add a key (custom cryptographic hash of the domain list), and check that key when the clients responds
@@ -63,10 +45,10 @@ class XmlMessage:
 class DistributedCrawlerServer(http.server.HTTPServer):
 
   LAST_CLIENT_VERSION = SERVER_PROTOCOL_VERSION = 1
+  MIN_ANALYSIS_PER_DOMAIN = 3
 
-  unchecked_domains = [ "domain%04d.com" % (i) for i in range(50) ] # we generate random domains for simulation
-  pending_domains = []
-  checked_domains = {} # this holds the results as ie: checked_domains["spam-domain.com"] = True
+  domains_to_check = [ "domain%04d.com" % (i) for i in range(50) ] # we generate random domains for simulation
+  checked_domains = {} # this holds the results as ie: checked_domains["spam-domain.com"] = (is_spam, number_of_clients_who_checked_this_domain)
 
   def __init__(self,port):
     super().__init__(("127.0.0.1",port),RequestHandler)
@@ -191,13 +173,29 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           for xml_domain in xml_post_data.iterfind("domainlist/domain"):
             domain = xml_domain.get("name")
             logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
-            if domain not in DistributedCrawlerServer.pending_domains:
-              # this domain has already been checked by another client
-              logging.getLogger().debug("Domain '%s' has already been checked, ignoring new analysis" % (domain) ) 
-              continue
             is_spam = (xml_domain.get("spam") == "1")
-            DistributedCrawlerServer.checked_domains[domain] = is_spam
-            DistributedCrawlerServer.pending_domains.remove(domain)
+            if domain in DistributedCrawlerServer.checked_domains:
+              # this domain has already been checked by at least another client
+              previous_is_spam = DistributedCrawlerServer.checked_domains[domain][0]
+              analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
+              if (previous_is_spam != is_spam) and (analysis_count > 1):
+                # differents clients gave different analysis, reset analysis count
+                # TODO it is still possible to game the system if the client send the same analysis X times in a row
+                logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
+                analysis_count = 0
+              elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
+                # enough checks for this domain
+                logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
+                try:
+                  DistributedCrawlerServer.domains_to_check.remove(domain)
+                except ValueError:
+                  # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
+                  # => we dont't care
+                  pass
+            else:
+              # this domain is checked for the first time
+              analysis_count = 1
+            DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
           # thanks buddy client!
           self.send_response(204) # 204 is like 200 OK, but the client should expect no content
