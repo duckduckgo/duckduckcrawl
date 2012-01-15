@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse, gzip, http.server, logging, os.path, random, string, urllib.parse, xml.etree.ElementTree, zlib
+import argparse, gzip, hashlib, http.server, logging, os.path, random, string, urllib.parse, xml.etree.ElementTree, zlib
 import ddc_process # just to get the version
 
 
@@ -31,15 +31,25 @@ class XmlMessage:
       xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
       logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
 
+    # add a signature, so we can detect a malicious client trying to send fake results for different domains
+    sign = __class__.get_xml_domain_list_sign(xml_domain_list)
+    xml_domain_list.set("sign",sign)
+
     if not domains_to_send_count:
       logging.getLogger().warning("No more domains to be checked")
 
-    # TODO add a key (custom cryptographic hash of the domain list), and check that key when the clients responds
-    # to be sure the client will not check different domains that the ones it has been sent.
-    # NOTE: the hash function needs to be hidden (closed source), and must change frequently so that it can not be guessed with a large number of hashed domain lists
-
   def __str__(self):
     return xml.etree.ElementTree.tostring(self.xml,"unicode")
+
+  @staticmethod
+  def get_xml_domain_list_sign(xml_domain_list):
+    # WARNING  : to be sure a malicious client can not send fake results for specific domains,
+    # the following hash function needs to be changed and hidden (not in a public repository)
+    # it must be complex and unconventionel (no md5, sha, etc.), so it can not be guessed
+    hasher = hashlib.sha256()
+    for domain in xml_domain_list.iterfind("domain"):
+      hasher.update(domain.get("name").encode("utf-8"))
+    return hasher.hexdigest()
 
 
 class DistributedCrawlerServer(http.server.HTTPServer):
@@ -48,7 +58,7 @@ class DistributedCrawlerServer(http.server.HTTPServer):
   MIN_ANALYSIS_PER_DOMAIN = 3
 
   domains_to_check = [ "domain%04d.com" % (i) for i in range(50) ] # we generate random domains for simulation
-  checked_domains = {} # this holds the results as ie: checked_domains["spam-domain.com"] = (is_spam, number_of_clients_who_checked_this_domain)
+  checked_domains = {} # this holds the results as ie: checked_domains["a-domain.com"] = (is_spam, number_of_clients_who_checked_this_domain)
 
   def __init__(self,port):
     super().__init__(("127.0.0.1",port),RequestHandler)
@@ -123,8 +133,6 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           else:
             compression = "identity"
 
-          # TODO add encryption?
-
           # send http headers
           self.send_response(200)
           # these headers are necessary even if we know what compression the client supports, and which encoding it expects,
@@ -169,33 +177,40 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           post_data = self.rfile.read(int(self.headers["content-length"]))
           xml_post_data = xml.etree.ElementTree.fromstring(post_data.decode("utf-8"))
 
-          # read domain analysis results
-          for xml_domain in xml_post_data.iterfind("domainlist/domain"):
-            domain = xml_domain.get("name")
-            logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
-            is_spam = (xml_domain.get("spam") == "1")
-            if domain in DistributedCrawlerServer.checked_domains:
-              # this domain has already been checked by at least another client
-              previous_is_spam = DistributedCrawlerServer.checked_domains[domain][0]
-              analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
-              if (previous_is_spam != is_spam) and (analysis_count > 1):
-                # differents clients gave different analysis, reset analysis count
-                # TODO it is still possible to game the system if the client send the same analysis X times in a row
-                logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
-                analysis_count = 0
-              elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
-                # enough checks for this domain
-                logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
-                try:
-                  DistributedCrawlerServer.domains_to_check.remove(domain)
-                except ValueError:
-                  # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
-                  # => we dont't care
-                  pass
-            else:
-              # this domain is checked for the first time
-              analysis_count = 1
-            DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
+          # check domainlist signature
+          xml_domainlist = xml_post_data.find("domainlist")
+          if xml_domainlist.get("sign") != XmlMessage.get_xml_domain_list_sign(xml_domainlist):
+            logging.getLogger().warning("Invalid signature for domainlist")
+            # we do NOT return a HTTP error code here, so that the evil malicious clients can keep wasting their time
+
+          else:
+            # read domain analysis results
+            for xml_domain in xml_post_data.iterfind("domainlist/domain"):
+              domain = xml_domain.get("name")
+              logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
+              is_spam = (xml_domain.get("spam") == "1")
+              if domain in DistributedCrawlerServer.checked_domains:
+                # this domain has already been checked by at least another client
+                previous_is_spam = DistributedCrawlerServer.checked_domains[domain][0]
+                analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
+                if (previous_is_spam != is_spam) and (analysis_count > 1):
+                  # differents clients gave different analysis, reset analysis count
+                  # TODO it is still possible to game the system if the client send the same analysis X times in a row
+                  logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
+                  analysis_count = 0
+                elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
+                  # enough checks for this domain
+                  logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
+                  try:
+                    DistributedCrawlerServer.domains_to_check.remove(domain)
+                  except ValueError:
+                    # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
+                    # => we dont't care
+                    pass
+              else:
+                # this domain is checked for the first time
+                analysis_count = 1
+              DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
           # thanks buddy client!
           self.send_response(204) # 204 is like 200 OK, but the client should expect no content
