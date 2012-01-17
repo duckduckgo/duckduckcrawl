@@ -32,8 +32,8 @@ class XmlMessage:
       logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
 
     # add a signature, so we can detect a malicious client trying to send fake results for different domains
-    sign = __class__.get_xml_domain_list_sign(xml_domain_list)
-    xml_domain_list.set("sign",sign)
+    sig = __class__.getXmlDomainListSig(xml_domain_list)
+    xml_domain_list.set("sig",sig)
 
     if not domains_to_send_count:
       logging.getLogger().warning("No more domains to be checked")
@@ -42,7 +42,7 @@ class XmlMessage:
     return xml.etree.ElementTree.tostring(self.xml,"unicode")
 
   @staticmethod
-  def get_xml_domain_list_sign(xml_domain_list):
+  def getXmlDomainListSig(xml_domain_list):
     # WARNING  : to be sure a malicious client can not send fake results for specific domains,
     # the following hash function needs to be changed and hidden (not in a public repository)
     # it must be complex and unconventionel (no md5, sha, etc.), so it can not be guessed
@@ -179,7 +179,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
           # check domainlist signature
           xml_domainlist = xml_post_data.find("domainlist")
-          if xml_domainlist.get("sign") != XmlMessage.get_xml_domain_list_sign(xml_domainlist):
+          if xml_domainlist.get("sig") != XmlMessage.getXmlDomainListSig(xml_domainlist):
             logging.getLogger().warning("Invalid signature for domainlist")
             # we do NOT return a HTTP error code here, so that the evil malicious clients can keep wasting their time
 
