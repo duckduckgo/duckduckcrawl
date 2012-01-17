@@ -5,6 +5,24 @@ import argparse, gzip, hashlib, http.server, logging, os.path, random, string, u
 import ddc_process # just to get the version
 
 
+class InvalidRequestException(Exception):
+
+  def __init__(self, url, client, msg, http_code=400):
+    self.url = url
+    self.client = client
+    self.msg = msg
+    self.http_code = http_code
+
+  def __str__(self):
+    return "Invalid request from %s for url '%s': %s" % (self.client, self.url, self.msg)
+
+
+class PotentiallyMaliciousRequestException(InvalidRequestException):
+
+  def __str__(self):
+    return "Potentially malicious request from %s for url '%s': %s" % (self.client, self.url, self.msg) 
+
+
 class XmlMessage:
 
   MAX_DOMAIN_LIST_SIZE = 20
@@ -70,8 +88,6 @@ class DistributedCrawlerServer(http.server.HTTPServer):
 
 class RequestHandler(http.server.BaseHTTPRequestHandler):
 
-  # TODO replace all the redundant log/send_error blocks with exceptions
-
   # override some useful http.server.BaseHTTPRequestHandler attributes
   server_version = "DDC_Server/%d" % (DistributedCrawlerServer.SERVER_PROTOCOL_VERSION)
   protocol_version = "HTTP/1.1"
@@ -85,9 +101,8 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       if parsed_url.path == "/upgrade":
         # check query is well formed
         if "file" not in params or \
-            not self.is_safe_filename(params["files"][0]): # we check for evil injection here
-          logging.getLogger().warning("Invalid query parameters for URL '%s'" % (self.path) ) 
-          self.send_error(400)
+            not self.isSafeFilename(params["files"][0]): # we check for evil injection here
+          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
 
         # serve file (might short-circuit that part with an Apache/Nginx URL rediretion directly to the static content)
         upgrade_file = params["files"][0]
@@ -101,56 +116,60 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             # send file
             self.wfile.write(file_handle.read())
         except IOError:
-          logging.getLogger().warning("Upgrade file '%s' does not exist or is not readable" % (upgrade_file) ) 
-          self.send_error(400)
+          raise InvalidRequestException(self.client_address[0],self.path,"Upgrade file '%s' does not exist or is not readable" % (upgrade_file))
 
       elif parsed_url.path == "/rest":
         # check query is well formed
+        # TODO: more robust checking
         if "action" not in params or \
             params["action"][0] != "getdomains" or \
             "version" not in params or \
             "pc_version" not in params:
-          logging.getLogger().warning("Invalid query parameters for URL '%s'" % (self.path) ) 
-          self.send_error(400)
+          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
+
+        # generate xml
+        xml_response = str(XmlMessage(int(params["version"][0]),int(params["pc_version"][0])))
+        
+        # prepare response
+        raw_response = xml_response.encode("utf-8")
+        if "accept-encoding" in self.headers:
+          supported_compressions = list(map(lambda x: x.strip(),self.headers["accept-encoding"].split(",")))
         else:
-          # generate xml
-          xml_response = str(XmlMessage(int(params["version"][0]),int(params["pc_version"][0])))
-          
-          # prepare response
-          raw_response = xml_response.encode("utf-8")
-          if "accept-encoding" in self.headers:
-            supported_compressions = list(map(lambda x: x.strip(),self.headers["accept-encoding"].split(",")))
-          else:
-            supported_compressions = []
-          if "gzip" in supported_compressions:
-            compression = "gzip"
-            buffer = memoryview(raw_response)
-            raw_response = gzip.compress(buffer)
-          elif "deflate" in supported_compressions:
-            compression = "deflate"
-            buffer = memoryview(raw_response)
-            raw_response = zlib.compress(buffer)
-          else:
-            compression = "identity"
+          supported_compressions = []
+        if "gzip" in supported_compressions:
+          compression = "gzip"
+          buffer = memoryview(raw_response)
+          raw_response = gzip.compress(buffer)
+        elif "deflate" in supported_compressions:
+          compression = "deflate"
+          buffer = memoryview(raw_response)
+          raw_response = zlib.compress(buffer)
+        else:
+          compression = "identity"
 
-          # send http headers
-          self.send_response(200)
-          # these headers are necessary even if we know what compression the client supports, and which encoding it expects,
-          # because the HTTP request might go through proxies, routers, etc
-          self.send_header("Content-Type",      "text/xml; charset=utf-8")
-          self.send_header("Content-Encoding",  compression)
-          self.send_header("Content-Length",    str(len(raw_response)))
-          self.send_header("Cache-Control",     "no-cache, no-store")
-          self.end_headers()
+        # send http headers
+        self.send_response(200)
+        # these headers are necessary even if we know what compression the client supports, and which encoding it expects,
+        # because the HTTP request might go through proxies, routers, etc
+        self.send_header("Content-Type",      "text/xml; charset=utf-8")
+        self.send_header("Content-Encoding",  compression)
+        self.send_header("Content-Length",    str(len(raw_response)))
+        self.send_header("Cache-Control",     "no-cache, no-store")
+        self.end_headers()
 
-          # send response
-          self.wfile.write(raw_response)
+        # send response
+        self.wfile.write(raw_response)
 
       else:
         # buggy client, crawler, or someone else we don't care about...
-        self.send_error(404)
+        raise InvalidRequestException(self.client_address[0],self.path,"URL not found",404)
+
+    except InvalidRequestException as e:
+      logging.getLogger().warning(e)
+      self.send_error(e.http_code)
 
     except:
+      # boom!
       self.send_error(500)
       raise
 
@@ -164,53 +183,52 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
 
         # check query is well formed
+        # TODO: more robust checking
         if "action" not in params or \
             params["action"][0] != "senddomainsdata" or \
             "version" not in params or \
             "pc_version" not in params:
-          logging.getLogger().warning("Invalid query parameters for URL '%s'" % (self.path) ) 
-          self.send_error(400)
-        else:
-          # TODO do version check of the client to decide to ignore it or not
+          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
 
-          # read post data
-          post_data = self.rfile.read(int(self.headers["content-length"]))
-          xml_post_data = xml.etree.ElementTree.fromstring(post_data.decode("utf-8"))
+        # TODO do version check of the client to decide to ignore it or not
 
-          # check domainlist signature
-          xml_domainlist = xml_post_data.find("domainlist")
-          if xml_domainlist.get("sig") != XmlMessage.getXmlDomainListSig(xml_domainlist):
-            logging.getLogger().warning("Invalid signature for domainlist")
-            # we do NOT return a HTTP error code here, so that the evil malicious clients can keep wasting their time
+        # read post data
+        post_data = self.rfile.read(int(self.headers["content-length"]))
+        xml_post_data = xml.etree.ElementTree.fromstring(post_data.decode("utf-8"))
 
+        # check domainlist signature
+        xml_domainlist = xml_post_data.find("domainlist")
+        if xml_domainlist.get("sig") != XmlMessage.getXmlDomainListSig(xml_domainlist):
+          # we do NOT return a different HTTP error code here, so that the evil malicious clients can keep wasting their time
+          raise PotentiallyMaliciousRequestException(self.client_address[0],self.path,"Invalid signature for domainlist",204)
+
+        # read domain analysis results
+        for xml_domain in xml_post_data.iterfind("domainlist/domain"):
+          domain = xml_domain.get("name")
+          logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
+          is_spam = (xml_domain.get("spam") == "1")
+          if domain in DistributedCrawlerServer.checked_domains:
+            # this domain has already been checked by at least another client
+            previous_is_spam = DistributedCrawlerServer.checked_domains[domain][0]
+            analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
+            if (previous_is_spam != is_spam) and (analysis_count > 1):
+              # differents clients gave different analysis, reset analysis count
+              # TODO it is still possible to game the system if the client send the same analysis X times in a row
+              logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
+              analysis_count = 0
+            elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
+              # enough checks for this domain
+              logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
+              try:
+                DistributedCrawlerServer.domains_to_check.remove(domain)
+              except ValueError:
+                # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
+                # => we dont't care
+                pass
           else:
-            # read domain analysis results
-            for xml_domain in xml_post_data.iterfind("domainlist/domain"):
-              domain = xml_domain.get("name")
-              logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
-              is_spam = (xml_domain.get("spam") == "1")
-              if domain in DistributedCrawlerServer.checked_domains:
-                # this domain has already been checked by at least another client
-                previous_is_spam = DistributedCrawlerServer.checked_domains[domain][0]
-                analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
-                if (previous_is_spam != is_spam) and (analysis_count > 1):
-                  # differents clients gave different analysis, reset analysis count
-                  # TODO it is still possible to game the system if the client send the same analysis X times in a row
-                  logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
-                  analysis_count = 0
-                elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
-                  # enough checks for this domain
-                  logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
-                  try:
-                    DistributedCrawlerServer.domains_to_check.remove(domain)
-                  except ValueError:
-                    # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
-                    # => we dont't care
-                    pass
-              else:
-                # this domain is checked for the first time
-                analysis_count = 1
-              DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
+            # this domain is checked for the first time
+            analysis_count = 1
+          DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
           # thanks buddy client!
           self.send_response(204) # 204 is like 200 OK, but the client should expect no content
@@ -218,14 +236,18 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
       else:
         # buggy client, crawler, or someone else we don't care about...
-        self.send_error(404)
+        raise InvalidRequestException(self.client_address[0],self.path,"URL not found",404)
+
+    except (PotentiallyMaliciousRequestException, InvalidRequestException) as e:
+      logging.getLogger().warning(e)
+      self.send_error(e.http_code)
 
     except:
       # boom!
       self.send_error(500)
       raise
 
-  def is_safe_filename(self,filename):
+  def isSafeFilename(self,filename):
     # ensure a filename has the form XXX.XX, with no slashes, double dots, etc. to protect from injection
     safe_chars = frozenset(string.ascii_letters + string.digits + "-")
     components = filename.split(".")
