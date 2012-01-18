@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse, gzip, hashlib, http.server, logging, os.path, random, string, urllib.parse, xml.etree.ElementTree, zlib
+import argparse, gzip, hashlib, http.server, logging, os.path, random, string, time, urllib.parse, xml.etree.ElementTree, zlib
 import ddc_process # just to get the version
 
 
@@ -50,7 +50,7 @@ class XmlMessage:
       logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
 
     # add a signature, so we can detect a malicious client trying to send fake results for different domains
-    sig = __class__.getXmlDomainListSig(xml_domain_list)
+    sig = __class__.getXmlDomainListSig(xml_domain_list,as_bytes=False)[1]
     xml_domain_list.set("sig",sig)
 
     if not domains_to_send_count:
@@ -60,14 +60,22 @@ class XmlMessage:
     return xml.etree.ElementTree.tostring(self.xml,"unicode")
 
   @staticmethod
-  def getXmlDomainListSig(xml_domain_list):
+  def getXmlDomainListSig(xml_domain_list,as_bytes=True,as_string=True):
     # WARNING  : to be sure a malicious client can not send fake results for specific domains,
     # the following hash function needs to be changed and hidden (not in a public repository)
     # it must be complex and unconventionel (no md5, sha, etc.), so it can not be guessed
     hasher = hashlib.sha256()
     for domain in xml_domain_list.iterfind("domain"):
       hasher.update(domain.get("name").encode("utf-8"))
-    return hasher.hexdigest()
+    if as_bytes:
+      bin_sig = hasher.digest()
+    else:
+      bin_sig = None
+    if as_string:
+      str_sig = hasher.hexdigest()
+    else:
+      str_sig = None
+    return (bin_sig, str_sig)
 
 
 class DistributedCrawlerServer(http.server.HTTPServer):
@@ -75,8 +83,13 @@ class DistributedCrawlerServer(http.server.HTTPServer):
   LAST_CLIENT_VERSION = SERVER_PROTOCOL_VERSION = 1
   MIN_ANALYSIS_PER_DOMAIN = 3
 
+  SIGNATURE_BLACKLIST_TIMEOUT_S = 60*60*24*30*3 # 3 month
+
   domains_to_check = [ "domain%04d.com" % (i) for i in range(50) ] # we generate random domains for simulation
   checked_domains = {} # this holds the results as ie: checked_domains["a-domain.com"] = (is_spam, number_of_clients_who_checked_this_domain)
+
+  excluded_sigs = [] # list of temporarily exluded domainlist signatures to prevent client spamming
+  excluded_sigs_time = [] # timestamps of the time when each signature has been excluded
 
   def __init__(self,port):
     super().__init__(("127.0.0.1",port),RequestHandler)
@@ -102,7 +115,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         # check query is well formed
         if "file" not in params or \
             not self.isSafeFilename(params["files"][0]): # we check for evil injection here
-          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
+          raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # serve file (might short-circuit that part with an Apache/Nginx URL rediretion directly to the static content)
         upgrade_file = params["files"][0]
@@ -116,7 +129,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             # send file
             self.wfile.write(file_handle.read())
         except IOError:
-          raise InvalidRequestException(self.client_address[0],self.path,"Upgrade file '%s' does not exist or is not readable" % (upgrade_file))
+          raise InvalidRequestException(self.path,self.client_address[0],"Upgrade file '%s' does not exist or is not readable" % (upgrade_file))
 
       elif parsed_url.path == "/rest":
         # check query is well formed
@@ -125,7 +138,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             params["action"][0] != "getdomains" or \
             "version" not in params or \
             "pc_version" not in params:
-          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
+          raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # generate xml
         xml_response = str(XmlMessage(int(params["version"][0]),int(params["pc_version"][0])))
@@ -162,7 +175,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
       else:
         # buggy client, crawler, or someone else we don't care about...
-        raise InvalidRequestException(self.client_address[0],self.path,"URL not found",404)
+        raise InvalidRequestException(self.path,self.client_address[0],"URL not found",404)
 
     except InvalidRequestException as e:
       logging.getLogger().warning(e)
@@ -188,7 +201,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             params["action"][0] != "senddomainsdata" or \
             "version" not in params or \
             "pc_version" not in params:
-          raise InvalidRequestException(self.client_address[0],self.path,"Invalid query parameters")
+          raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # TODO do version check of the client to decide to ignore it or not
 
@@ -198,9 +211,34 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
         # check domainlist signature
         xml_domainlist = xml_post_data.find("domainlist")
-        if xml_domainlist.get("sig") != XmlMessage.getXmlDomainListSig(xml_domainlist):
+        domainlist_sig = XmlMessage.getXmlDomainListSig(xml_domainlist)
+        if xml_domainlist.get("sig") != domainlist_sig[1]:
           # we do NOT return a different HTTP error code here, so that the evil malicious clients can keep wasting their time
-          raise PotentiallyMaliciousRequestException(self.client_address[0],self.path,"Invalid signature for domainlist",204)
+          raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Invalid signature for domainlist",204)
+
+        # remove outdated exluded signatures
+        current_time = int(time.time())
+        while DistributedCrawlerServer.excluded_sigs_time and (current_time - DistributedCrawlerServer.excluded_sigs_time[0] > DistributedCrawlerServer.SIGNATURE_BLACKLIST_TIMEOUT_S):
+          del DistributedCrawlerServer.excluded_sigs[0]
+          del DistributedCrawlerServer.excluded_sigs_time[0]
+
+        # check the signature is not exluded (= the client is spamming its probably fake analysis)
+        try:
+          index = DistributedCrawlerServer.excluded_sigs.index(domainlist_sig[0])
+        except ValueError:
+          # sig not in blacklist, all good
+          pass
+        else:
+          # blacklist the signature for another SIGNATURE_BLACKLIST_TIMEOUT_S
+          del DistributedCrawlerServer.excluded_sigs[index]
+          del DistributedCrawlerServer.excluded_sigs_time[index]
+          DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0])
+          DistributedCrawlerServer.excluded_sigs_time.append(current_time)
+          raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Client is spamming an already sent domainlist",204)
+
+        # update exluded signature list
+        DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0]) # we store the signature in its binary form for space efficiency (the list will grow huge)
+        DistributedCrawlerServer.excluded_sigs_time.append(current_time)
 
         # read domain analysis results
         for xml_domain in xml_post_data.iterfind("domainlist/domain"):
@@ -213,7 +251,6 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
             if (previous_is_spam != is_spam) and (analysis_count > 1):
               # differents clients gave different analysis, reset analysis count
-              # TODO it is still possible to game the system if the client send the same analysis X times in a row
               logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
               analysis_count = 0
             elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
@@ -230,13 +267,13 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             analysis_count = 1
           DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
-          # thanks buddy client!
-          self.send_response(204) # 204 is like 200 OK, but the client should expect no content
-          self.end_headers()
+        # thanks buddy client!
+        self.send_response(204) # 204 is like 200 OK, but the client should expect no content
+        self.end_headers()
 
       else:
         # buggy client, crawler, or someone else we don't care about...
-        raise InvalidRequestException(self.client_address[0],self.path,"URL not found",404)
+        raise InvalidRequestException(self.path,self.client_address[0],"URL not found",404)
 
     except (PotentiallyMaliciousRequestException, InvalidRequestException) as e:
       logging.getLogger().warning(e)
