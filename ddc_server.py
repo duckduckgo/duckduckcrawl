@@ -43,7 +43,7 @@ class XmlMessage:
 
     # generate domain list nodes
     xml_domain_list = xml.etree.ElementTree.SubElement(self.xml,"domainlist")
-    domains_to_send_count = min(len(DistributedCrawlerServer.domains_to_check),self.MAX_DOMAIN_LIST_SIZE)
+    domains_to_send_count = min(len(DistributedCrawlerServer.domains_to_check),__class__.MAX_DOMAIN_LIST_SIZE)
     for i in range(domains_to_send_count):
       domain = random.choice(DistributedCrawlerServer.domains_to_check) # pick a random domain in the list
       xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
@@ -95,7 +95,7 @@ class DistributedCrawlerServer(http.server.HTTPServer):
     super().__init__(("127.0.0.1",port),RequestHandler)
 
   def start(self):
-    logging.getLogger().info("Server started")
+    logging.getLogger().info("DuckDuckGo distributed crawler server v%d started" % (__class__.SERVER_PROTOCOL_VERSION))
     self.serve_forever()
 
 
@@ -253,18 +253,19 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
               # differents clients gave different analysis, reset analysis count
               logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
               analysis_count = 0
-            elif analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
-              # enough checks for this domain
+            else:
+              if analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
+                # enough checks for this domain
+                try:
+                  DistributedCrawlerServer.domains_to_check.remove(domain)
+                except ValueError:
+                  # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
+                  # => we dont't care
+                  pass
               logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
-              try:
-                DistributedCrawlerServer.domains_to_check.remove(domain)
-              except ValueError:
-                # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
-                # => we dont't care
-                pass
           else:
-            # this domain is checked for the first time
             analysis_count = 1
+            logging.getLogger().debug("Domain '%s' is checked for the first time, is_spam=%d" % (domain, is_spam) ) 
           DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
         # thanks buddy client!
