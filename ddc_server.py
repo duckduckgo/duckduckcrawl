@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import argparse, gzip, hashlib, http.server, logging, os.path, random, string, time, urllib.parse, xml.etree.ElementTree, zlib
-import ddc_process # just to get the version
 
 
 class InvalidRequestException(Exception):
@@ -32,29 +31,35 @@ class XmlMessage:
 
     # generate upgrade nodes
     xml_upgrade = xml.etree.ElementTree.SubElement(self.xml,"upgrades")
+    need_upgrade = False
     if client_version < DistributedCrawlerServer.LAST_CLIENT_VERSION:
       # need to upgrade the client
-      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
-                                                                      "url"   : "/upgrade?file=client-v%d.zip" % (DistributedCrawlerServer.LAST_CLIENT_VERSION) })
-    if page_processor_version < ddc_process.VERSION:
+      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"     : "client",
+                                                                      "url"     : "/upgrade?file=client-v%d.zip" % (DistributedCrawlerServer.LAST_CLIENT_VERSION) ,
+                                                                      "version" : str(DistributedCrawlerServer.LAST_CLIENT_VERSION) } )
+      need_upgrade = True
+    if page_processor_version < DistributedCrawlerServer.LAST_PC_VERSION:
       # need to upgrade the page processing component
-      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "client",
-                                                                      "url"   : "/upgrade?file=page-processor-v%d.zip" % (ddc_process.VERSION) })
+      xml.etree.ElementTree.SubElement(xml_upgrade,"upgrade",attrib={"type"  : "page analysis",
+                                                                      "url"   : "/upgrade?file=page-processor-v%d.zip" % (DistributedCrawlerServer.LAST_PC_VERSION),
+                                                                      "version" : str(DistributedCrawlerServer.LAST_CLIENT_VERSION) } )
+      need_upgrade = True
 
-    # generate domain list nodes
-    xml_domain_list = xml.etree.ElementTree.SubElement(self.xml,"domainlist")
-    domains_to_send_count = min(len(DistributedCrawlerServer.domains_to_check),__class__.MAX_DOMAIN_LIST_SIZE)
-    for i in range(domains_to_send_count):
-      domain = random.choice(DistributedCrawlerServer.domains_to_check) # pick a random domain in the list
-      xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
-      logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
+    if not need_upgrade:
+      # generate domain list nodes
+      xml_domain_list = xml.etree.ElementTree.SubElement(self.xml,"domainlist")
+      domains_to_send_count = min(len(DistributedCrawlerServer.domains_to_check),__class__.MAX_DOMAIN_LIST_SIZE)
+      for i in range(domains_to_send_count):
+        domain = random.choice(DistributedCrawlerServer.domains_to_check) # pick a random domain in the list
+        xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
+        logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
 
-    # add a signature, so we can detect a malicious client trying to send fake results for different domains
-    sig = __class__.getXmlDomainListSig(xml_domain_list,as_bytes=False)[1]
-    xml_domain_list.set("sig",sig)
+      # add a signature, so we can detect a malicious client trying to send fake results for different domains
+      sig = __class__.getXmlDomainListSig(xml_domain_list,as_bytes=False)[1]
+      xml_domain_list.set("sig",sig)
 
-    if not domains_to_send_count:
-      logging.getLogger().warning("No more domains to be checked")
+      if not domains_to_send_count:
+        logging.getLogger().warning("No more domains to be checked")
 
   def __str__(self):
     return xml.etree.ElementTree.tostring(self.xml,"unicode")
@@ -81,6 +86,7 @@ class XmlMessage:
 class DistributedCrawlerServer(http.server.HTTPServer):
 
   LAST_CLIENT_VERSION = SERVER_PROTOCOL_VERSION = 1
+  LAST_PC_VERSION = 1
   MIN_ANALYSIS_PER_DOMAIN = 3
 
   SIGNATURE_BLACKLIST_TIMEOUT_S = 60*60*24*30*3 # 3 month
@@ -114,21 +120,22 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       if parsed_url.path == "/upgrade":
         # check query is well formed
         if "file" not in params or \
-            not self.isSafeFilename(params["files"][0]): # we check for evil injection here
+            not self.isSafeFilename(params["file"][0]): # we check for evil injection here
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # serve file (might short-circuit that part with an Apache/Nginx URL rediretion directly to the static content)
-        upgrade_file = params["files"][0]
+        upgrade_file = params["file"][0]
         try:
           with open(upgrade_file,"rb") as file_handle:
             # send http headers
             self.send_response(200)
-            self.send_header("Content-Type",      "application/zip")
-            self.send_header("Content-Length",    file_size)
+            self.send_header("Content-Type",        "application/zip")
+            self.send_header("Content-Length",      os.path.getsize(upgrade_file))
+            self.send_header("Content-Disposition", "attachement; filename=%s" % (upgrade_file) )
             self.end_headers()
             # send file
             self.wfile.write(file_handle.read())
-        except IOError:
+        except (IOError, OSError):
           raise InvalidRequestException(self.path,self.client_address[0],"Upgrade file '%s' does not exist or is not readable" % (upgrade_file))
 
       elif parsed_url.path == "/rest":
@@ -229,12 +236,13 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           # sig not in blacklist, all good
           pass
         else:
-          # blacklist the signature for another SIGNATURE_BLACKLIST_TIMEOUT_S
-          del DistributedCrawlerServer.excluded_sigs[index]
-          del DistributedCrawlerServer.excluded_sigs_time[index]
-          DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0])
-          DistributedCrawlerServer.excluded_sigs_time.append(current_time)
-          raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Client is spamming an already sent domainlist",204)
+          if len(domains_to_check) >= XmlMessage.MAX_DOMAIN_LIST_SIZE: # without this the server will exclude all analysis when there is only a few domains left
+            # blacklist the signature for another SIGNATURE_BLACKLIST_TIMEOUT_S
+            del DistributedCrawlerServer.excluded_sigs[index]
+            del DistributedCrawlerServer.excluded_sigs_time[index]
+            DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0])
+            DistributedCrawlerServer.excluded_sigs_time.append(current_time)
+            raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Client is spamming an already sent domainlist",204)
 
         # update exluded signature list
         DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0]) # we store the signature in its binary form for space efficiency (the list will grow huge)
