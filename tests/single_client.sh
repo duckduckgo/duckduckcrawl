@@ -16,6 +16,6 @@ sleep 1s
 client_job_id=$!
 
 # kill both after X s
-sleep 10s $KILL_AFTER
+sleep $KILL_AFTER
 kill $client_job_id
 kill $server_job_id

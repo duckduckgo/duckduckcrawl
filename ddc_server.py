@@ -66,7 +66,7 @@ class XmlMessage:
 
   @staticmethod
   def getXmlDomainListSig(xml_domain_list,as_bytes=True,as_string=True):
-    # WARNING  : to be sure a malicious client can not send fake results for specific domains,
+    # WARNING: to be sure a malicious client can not send fake results for specific domains,
     # the following hash function needs to be changed and hidden (not in a public repository)
     # it must be complex and unconventionel (no md5, sha, etc.), so it can not be guessed
     hasher = hashlib.sha256()
