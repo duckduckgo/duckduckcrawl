@@ -17,7 +17,7 @@ class DistributedCrawlerClient():
 
   def __init__(self,server,port):
     self.base_url = "http://%s:%d" % (server,port)
-    self.api_base_url = "%s/rest" % (self.base_url)
+    self.api_base_url = "%s/domains" % (self.base_url)
   
   def start(self,):
     logging.getLogger().info("DuckDuckGo distributed crawler client v%d started" % (__class__.CLIENT_VERSION))
@@ -26,8 +26,7 @@ class DistributedCrawlerClient():
     try:
       while True:
         # see README.md for params description
-        response = self.api_request({ "action"          : "getdomains",
-                                      "version"         : str(__class__.CLIENT_VERSION),
+        response = self.api_request({ "version"         : str(__class__.CLIENT_VERSION),
                                       "pc_version"      : str(ddc_process.VERSION) }).decode("utf-8")
 
         # read response
@@ -77,8 +76,7 @@ class DistributedCrawlerClient():
 
         # send POST request
         post_data = xml.etree.ElementTree.tostring(xml_root)
-        self.api_request( { "action"     : "senddomainsdata",
-                            "version"    : str(__class__.CLIENT_VERSION),
+        self.api_request( { "version"    : str(__class__.CLIENT_VERSION),
                             "pc_version" : str(ddc_process.VERSION) },
                             True,
                             post_data) # we don't care for what the server actually returns here

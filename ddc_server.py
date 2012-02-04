@@ -141,13 +141,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         except (IOError, OSError):
           raise InvalidRequestException(self.path,self.client_address[0],"Upgrade file '%s' does not exist or is not readable" % (upgrade_file))
 
-      elif parsed_url.path == "/rest":
+      elif parsed_url.path == "/domains":
         # check query is well formed
         # TODO: more robust checking
-        if "action" not in params or \
-            params["action"][0] != "getdomains" or \
-            "version" not in params or \
-            "pc_version" not in params:
+        if "version" not in params or "pc_version" not in params:
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # generate xml
@@ -201,16 +198,13 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       # parse request url
       parsed_url = urllib.parse.urlsplit(self.path)
 
-      if parsed_url.path == "/rest":
+      if parsed_url.path == "/domains":
         # parse url parameters
         params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
 
         # check query is well formed
         # TODO: more robust checking
-        if "action" not in params or \
-            params["action"][0] != "senddomainsdata" or \
-            "version" not in params or \
-            "pc_version" not in params:
+        if "version" not in params or "pc_version" not in params:
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # TODO do version check of the client to decide to ignore it or not
@@ -280,6 +274,8 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
         # thanks buddy client!
         self.send_response(202)
+        self.send_header("Content-Length", 0)
+        self.send_header("Cache-Control",  "no-cache, no-store")
         self.end_headers()
 
       else:
