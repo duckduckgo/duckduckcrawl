@@ -90,6 +90,9 @@ class DistributedCrawlerServer(http.server.HTTPServer):
 
   LAST_CLIENT_VERSION = SERVER_PROTOCOL_VERSION = 1
   LAST_PC_VERSION = 1
+  KNOWN_CLIENT_VERSIONS = range(1,LAST_CLIENT_VERSION+1)
+  KNOWN_PC_VERSIONS = range(1,LAST_PC_VERSION+1)
+
   MIN_ANALYSIS_PER_DOMAIN = 3
 
   SIGNATURE_BLACKLIST_TIMEOUT_S = 60*60*24*30*3 # 3 month
@@ -143,8 +146,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
       elif parsed_url.path == "/domains":
         # check query is well formed
-        # TODO: more robust checking
-        if "version" not in params or "pc_version" not in params:
+        if "version" not in params or \
+            "pc_version" not in params or \
+            int(params["version"][0]) not in DistributedCrawlerServer.KNOWN_CLIENT_VERSIONS or \
+            int(params["pc_version"][0]) not in DistributedCrawlerServer.KNOWN_PC_VERSIONS:
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # generate xml
@@ -203,8 +208,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
 
         # check query is well formed
-        # TODO: more robust checking
-        if "version" not in params or "pc_version" not in params:
+        if "version" not in params or \
+            "pc_version" not in params or \
+            int(params["version"][0]) not in DistributedCrawlerServer.KNOWN_CLIENT_VERSIONS or \
+            int(params["pc_version"][0]) not in DistributedCrawlerServer.KNOWN_PC_VERSIONS:
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # TODO do version check of the client to decide to ignore it or not
@@ -232,7 +239,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           # sig not in blacklist, all good
           pass
         else:
-          if len(domains_to_check) >= XmlMessage.MAX_DOMAIN_LIST_SIZE: # without this the server will exclude all analysis when there is only a few domains left
+          if len(DistributedCrawlerServer.domains_to_check) >= XmlMessage.MAX_DOMAIN_LIST_SIZE: # without this the server will exclude all analysis when there is only a few domains left
             # blacklist the signature for another SIGNATURE_BLACKLIST_TIMEOUT_S
             del DistributedCrawlerServer.excluded_sigs[index]
             del DistributedCrawlerServer.excluded_sigs_time[index]
