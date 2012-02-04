@@ -18,6 +18,9 @@ class InvalidRequestException(Exception):
 
 class PotentiallyMaliciousRequestException(InvalidRequestException):
 
+  def __init__(self, url, client, msg, http_code=403):
+    InvalidRequestException.__init__(url, client, msg, http_code)
+
   def __str__(self):
     return "Potentially malicious request from %s for url '%s': %s" % (self.client, self.url, self.msg) 
 
@@ -220,8 +223,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         xml_domainlist = xml_post_data.find("domainlist")
         domainlist_sig = XmlMessage.getXmlDomainListSig(xml_domainlist)
         if xml_domainlist.get("sig") != domainlist_sig[1]:
-          # we do NOT return a different HTTP error code here, so that the evil malicious clients can keep wasting their time
-          raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Invalid signature for domainlist",204)
+          raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Invalid signature for domainlist")
 
         # remove outdated exluded signatures
         current_time = int(time.time())
@@ -242,7 +244,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             del DistributedCrawlerServer.excluded_sigs_time[index]
             DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0])
             DistributedCrawlerServer.excluded_sigs_time.append(current_time)
-            raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Client is spamming an already sent domainlist",204)
+            raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Client is spamming an already sent domainlist")
 
         # update exluded signature list
         DistributedCrawlerServer.excluded_sigs.append(domainlist_sig[0]) # we store the signature in its binary form for space efficiency (the list will grow huge)
@@ -277,7 +279,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
           DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
         # thanks buddy client!
-        self.send_response(204) # 204 is like 200 OK, but the client should expect no content
+        self.send_response(202)
         self.end_headers()
 
       else:
