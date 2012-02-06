@@ -26,7 +26,7 @@ class DistributedCrawlerClient():
     try:
       while True:
         # see README.md for params description
-        response = self.api_request({ "version"         : str(__class__.CLIENT_VERSION),
+        response = self.apiRequest({ "version"         : str(__class__.CLIENT_VERSION),
                                       "pc_version"      : str(ddc_process.VERSION) }).decode("utf-8")
 
         # read response
@@ -76,7 +76,7 @@ class DistributedCrawlerClient():
 
         # send POST request
         post_data = xml.etree.ElementTree.tostring(xml_root)
-        self.api_request( { "version"    : str(__class__.CLIENT_VERSION),
+        self.apiRequest( { "version"    : str(__class__.CLIENT_VERSION),
                             "pc_version" : str(ddc_process.VERSION) },
                             True,
                             post_data) # we don't care for what the server actually returns here
@@ -86,7 +86,7 @@ class DistributedCrawlerClient():
       exit(7)
 
 
-  def api_request(self,url_params,post_request=False,post_data=None):
+  def apiRequest(self,url_params,post_request=False,post_data=None):
     # construct url
     url = "%s?%s" % (self.api_base_url,urllib.parse.urlencode(url_params))
     # send request
