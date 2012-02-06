@@ -146,10 +146,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
       elif parsed_url.path == "/domains":
         # check query is well formed
-        if "version" not in params or \
-            "pc_version" not in params or \
-            int(params["version"][0]) not in DistributedCrawlerServer.KNOWN_CLIENT_VERSIONS or \
-            int(params["pc_version"][0]) not in DistributedCrawlerServer.KNOWN_PC_VERSIONS:
+        if not self.validParams(params):
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # generate xml
@@ -208,10 +205,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed_url.query,keep_blank_values=False,strict_parsing=True)
 
         # check query is well formed
-        if "version" not in params or \
-            "pc_version" not in params or \
-            int(params["version"][0]) not in DistributedCrawlerServer.KNOWN_CLIENT_VERSIONS or \
-            int(params["pc_version"][0]) not in DistributedCrawlerServer.KNOWN_PC_VERSIONS:
+        if not self.validParams(params):
           raise InvalidRequestException(self.path,self.client_address[0],"Invalid query parameters")
 
         # TODO do version check of the client to decide to ignore it or not
@@ -309,6 +303,15 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         if char not in safe_chars:
           return False
     return True
+
+  def validParams(self,params):
+    if "version" not in params or "pc_version" not in params:
+      return False
+    try:
+      v, v_pc = int(params["version"][0]), int(params["pc_version"][0])
+    except ValueError:
+      return False # integer conversion failed
+    return (v in DistributedCrawlerServer.KNOWN_CLIENT_VERSIONS) and (v_pc in DistributedCrawlerServer.KNOWN_PC_VERSIONS)
 
 
 if __name__ == "__main__":
