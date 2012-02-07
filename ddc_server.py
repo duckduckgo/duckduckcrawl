@@ -155,9 +155,9 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         # prepare response
         raw_response = xml_response.encode("utf-8")
         if "accept-encoding" in self.headers:
-          supported_compressions = list(map(lambda x: x.strip(),self.headers["accept-encoding"].split(",")))
+          supported_compressions = frozenset(map(lambda x: x.strip(),self.headers["accept-encoding"].split(",")))
         else:
-          supported_compressions = []
+          supported_compressions = frozenset()
         if "gzip" in supported_compressions:
           compression = "gzip"
           buffer = memoryview(raw_response)
@@ -267,10 +267,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
                   # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
                   # => we dont't care
                   pass
-              logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%d" % (domain, analysis_count, is_spam) ) 
+              logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%s" % (domain, analysis_count, is_spam) ) 
           else:
             analysis_count = 1
-            logging.getLogger().debug("Domain '%s' is checked for the first time, is_spam=%d" % (domain, is_spam) ) 
+            logging.getLogger().debug("Domain '%s' is checked for the first time, is_spam=%s" % (domain, is_spam) ) 
           DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
         # thanks buddy client!
