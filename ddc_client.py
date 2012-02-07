@@ -10,6 +10,15 @@ class NeedRestartException(Exception):
   pass
 
 
+class InvalidServerResponse(Exception):
+
+  def __init__(self,http_code):
+    self.http_code = http_code
+
+  def __str__(self):
+    return "Server returned unexpected %d HTTP code" % (self.http_code)
+
+
 class DistributedCrawlerClient():
 
   CLIENT_VERSION = 1
@@ -25,61 +34,66 @@ class DistributedCrawlerClient():
 
     try:
       while True:
-        # see README.md for params description
-        response = self.apiRequest({ "version"         : str(__class__.CLIENT_VERSION),
-                                      "pc_version"      : str(ddc_process.VERSION) }).decode("utf-8")
 
-        # read response
-        xml_response = xml.etree.ElementTree.fromstring(response)
-        xml_domains = xml_response.findall("domainlist/domain")
-        domain_count = len(xml_domains)
+        try:
+          # see README.md for params description
+          response = self.apiRequest({ "version"         : str(__class__.CLIENT_VERSION),
+                                        "pc_version"      : str(ddc_process.VERSION) }).decode("utf-8")
 
-        # upgrade components if necessary
-        need_restart = False
-        for xml_upgrade in xml_response.findall("upgrades/upgrade"):
-          type = xml_upgrade.get("type")
-          version = xml_upgrade.get("version")
-          logging.getLogger().info("Upgrading '%s' component to version %s" % (type,version) )
-          url = self.base_url + xml_upgrade.get("url")
-          response, content = __class__.http_client.request(url)
-          zip_filename = response["content-disposition"].split(";")[1].split("=")[1]
-          with open(zip_filename,"r+b") as file_handle:
-            file_handle.write(content)
-            archive = zipfile.ZipFile(file_handle,"r")
-            archive.extractall()
-            archive.close()
-          need_restart = True
-        if need_restart:
-          raise NeedRestartException()
+          # read response
+          xml_response = xml.etree.ElementTree.fromstring(response)
+          xml_domains = xml_response.findall("domainlist/domain")
+          domain_count = len(xml_domains)
 
-        # if the server has no work for us, take a nap
-        if not domain_count:
-          logging.getLogger().info("Got no domains to check from server, sleeping for 30s...")
-          time.sleep(30)
-          continue
+          # upgrade components if necessary
+          need_restart = False
+          for xml_upgrade in xml_response.findall("upgrades/upgrade"):
+            type = xml_upgrade.get("type")
+            version = xml_upgrade.get("version")
+            logging.getLogger().info("Upgrading '%s' component to version %s" % (type,version) )
+            url = self.base_url + xml_upgrade.get("url")
+            response, content = __class__.http_client.request(url)
+            zip_filename = response["content-disposition"].split(";")[1].split("=")[1]
+            with open(zip_filename,"r+b") as file_handle:
+              file_handle.write(content)
+              archive = zipfile.ZipFile(file_handle,"r")
+              archive.extractall()
+              archive.close()
+            need_restart = True
+          if need_restart:
+            raise NeedRestartException()
 
-        # check domains
-        logging.getLogger().info("Got %d domains to check from server" % (domain_count) )
-        domains_state = [ False for i in range(domain_count) ]
-        for (i, xml_domain) in enumerate(xml_domains):
-          domain = xml_domain.get("name")
-          logging.getLogger().debug("Checking domain '%s'" % (domain) )
-          domains_state[i] = ddc_process.is_spam(domain)
-          # TODO should add a special XML attribute for when a domain check fails (network, etc.)
+          # if the server has no work for us, take a nap
+          if not domain_count:
+            logging.getLogger().info("Got no domains to check from server, sleeping for 30s...")
+            time.sleep(30)
+            continue
 
-        # prepare POST request content
-        xml_root = xml.etree.ElementTree.Element("ddc")
-        xml_domain_list = xml_response.find("domainlist") # reuse the previous XML domain list
-        for (xml_domain, is_spam) in zip(xml_domain_list.iterfind("domain"),domains_state):
-          xml_domain.set("spam",str(int(is_spam)))
-        xml_root.append(xml_domain_list)
+          # check domains
+          logging.getLogger().info("Got %d domains to check from server" % (domain_count) )
+          domains_state = [ False for i in range(domain_count) ]
+          for (i, xml_domain) in enumerate(xml_domains):
+            domain = xml_domain.get("name")
+            logging.getLogger().debug("Checking domain '%s'" % (domain) )
+            domains_state[i] = ddc_process.is_spam(domain)
+            # TODO should add a special XML attribute for when a domain check fails (network, etc.)
 
-        # send POST request
-        post_data = xml.etree.ElementTree.tostring(xml_root)
-        self.apiRequest( { "version"    : str(__class__.CLIENT_VERSION),
-                            "pc_version" : str(ddc_process.VERSION) },
-                            True,
-                            post_data) # we don't care for what the server actually returns here
+          # prepare POST request content
+          xml_root = xml.etree.ElementTree.Element("ddc")
+          xml_domain_list = xml_response.find("domainlist") # reuse the previous XML domain list
+          for (xml_domain, is_spam) in zip(xml_domain_list.iterfind("domain"),domains_state):
+            xml_domain.set("spam",str(int(is_spam)))
+          xml_root.append(xml_domain_list)
+
+          # send POST request
+          post_data = xml.etree.ElementTree.tostring(xml_root)
+          self.apiRequest( { "version"    : str(__class__.CLIENT_VERSION),
+                              "pc_version" : str(ddc_process.VERSION) },
+                              True,
+                              post_data) # we don't care for what the server actually returns here
+
+        except InvalidServerResponse as e:
+          logging.getLogger().warning(e)
 
     except NeedRestartException:
       logging.getLogger().info("Restarting client")
@@ -96,6 +110,9 @@ class DistributedCrawlerClient():
     else:
       logging.getLogger().info("Fetching '%s'" % (url) )
       response, content = __class__.http_client.request(url)
+    http_code = int(response["status"])
+    if http_code not in (200, 202):
+      raise InvalidServerResponse(http_code)
     return content
 
 
