@@ -71,18 +71,26 @@ class DistributedCrawlerClient():
 
           # check domains
           logging.getLogger().info("Got %d domains to check from server" % (domain_count) )
-          domains_state = [ False for i in range(domain_count) ]
+          spam_domain_indexes = set()
+          failed_domain_indexes = set()
           for (i, xml_domain) in enumerate(xml_domains):
             domain = xml_domain.get("name")
             logging.getLogger().debug("Checking domain '%s'" % (domain) )
-            domains_state[i] = ddc_process.is_spam(domain)
-            # TODO should add a special XML attribute for when a domain check fails (network, etc.)
+            try:
+              if ddc_process.is_spam(domain):
+                spam_domain_indexes.add(i)
+            except ddc_process.FailedAnalysis:
+              failed_domain_indexes.add(i)
 
           # prepare POST request content
           xml_root = xml.etree.ElementTree.Element("ddc")
           xml_domain_list = xml_response.find("domainlist") # reuse the previous XML domain list
-          for (xml_domain, is_spam) in zip(xml_domain_list.iterfind("domain"),domains_state):
-            xml_domain.set("spam",str(int(is_spam)))
+          for (i, xml_domain) in enumerate(xml_domain_list.iterfind("domain")):
+            if i in failed_domain_indexes:
+              xml_domain.set("failed","1")
+            else:
+              is_spam = (i in spam_domain_indexes)
+              xml_domain.set("spam",str(int(is_spam)))
           xml_root.append(xml_domain_list)
 
           # send POST request

@@ -248,6 +248,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         # read domain analysis results
         for xml_domain in xml_post_data.iterfind("domainlist/domain"):
           domain = xml_domain.get("name")
+          if xml_domain.get("failed") == "1":
+            logging.getLogger().warning("Client failed to check domain '%s'" % (domain) ) 
+            # TODO exclude domain if too many clients have fail too check it?
+            continue
           logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
           is_spam = (xml_domain.get("spam") == "1")
           if domain in DistributedCrawlerServer.checked_domains:
