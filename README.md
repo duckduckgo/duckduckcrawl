@@ -38,7 +38,7 @@ It contains one of these nodes immediately above the root:
 
 I use the 3.2.1 version because I think there is a bug in the logging module of the 3.2.2 version.
 
- * [httplib2 0.7+](http://lxml.de/index.html#download)
+ * [httplib2 0.7+](https://code.google.com/p/httplib2/downloads/list)
 
 I use the following Bash script to compile and install both on Ubuntu 10.10:
 
