@@ -22,15 +22,15 @@ zip -qj "client-v${new_client_version}.zip" "$TMP_DIR/ddc_client.py"
 zip -qj "page-processor-v${new_page_processor_version}.zip" "$TMP_DIR/ddc_process.py"
 
 # start server
-./ddc_server.py -p 10001 &
+./ddc_server.py -v debug -p 10001 &
 server_job_id=$!
 
 # wait a bit to be sure the server is ready
 sleep 1s
 
 # start client
-./ddc_client.py -s 127.0.0.1 -p 10001
-./ddc_client.py -s 127.0.0.1 -p 10001 &
+./ddc_client.py -v debug -s 127.0.0.1 -p 10001
+./ddc_client.py -v debug -s 127.0.0.1 -p 10001 &
 client_job_id=$!
 
 # kill both after X s

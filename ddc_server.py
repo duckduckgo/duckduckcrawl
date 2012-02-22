@@ -4,6 +4,17 @@
 import argparse, gzip, hashlib, http.server, logging, os.path, random, string, time, urllib.parse, xml.etree.ElementTree, zlib
 
 
+class DebugLogRecordFactory():
+
+  def __init__(self):
+    self.default_logrecord_factory = logging.getLogRecordFactory()
+
+  def log(self,*args, **kwargs):
+    record = self.default_logrecord_factory(*args, **kwargs)
+    record.msg = "[SERVER] %s" % (record.msg)
+    return record
+
+
 class InvalidRequestException(Exception):
 
   def __init__(self, url, client, msg, http_code=400):
@@ -296,6 +307,11 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
       self.send_error(500)
       raise
 
+  def log_message(self,format,*args):
+    # circumvent base HTTP logging and use our custom logger via the logging module (see /usr/local/lib/python3.2/http/server.py in a standard Unix Python3.2 install)
+    #super().log_message(format,*args)
+    logging.getLogger().info("%s - - [%s] %s" % (self.address_string(),self.log_date_time_string(),format%args) )
+
   def isSafeFilename(self,filename):
     # ensure a filename has the form XXX.XX, with no slashes, double dots, etc. to protect from injection
     safe_chars = frozenset(string.ascii_letters + string.digits + "-")
@@ -320,10 +336,6 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
 
-  # setup logger
-  logger = logging.getLogger()
-  logger.setLevel(logging.DEBUG)
-
   # parse args
   cli_parser = argparse.ArgumentParser()
   cli_parser.add_argument("-p", 
@@ -333,7 +345,27 @@ if __name__ == "__main__":
                           type=int,
                           dest="port",
                           help="Network port to use to communicate with clients")
+  cli_parser.add_argument("-v", 
+                          "--verbosity",
+                          action="store",
+                          choices=("quiet","warning","info","debug"),
+                          default="info",
+                          dest="verbosity",
+                          help="Level of output to diplay")
   options = cli_parser.parse_args()
+
+  # setup logger
+  logger = logging.getLogger()
+  if options.verbosity == "quiet":
+    logger.setLevel(logging.CRITICAL+1)
+  elif options.verbosity == "warning":
+    logger.setLevel(logging.WARNING)
+  elif options.verbosity == "info":
+    logger.setLevel(logging.INFO)
+  elif options.verbosity == "debug":
+    logger.setLevel(logging.DEBUG)
+    logrecord_factory = DebugLogRecordFactory()
+    logging.setLogRecordFactory(logrecord_factory.log)
 
   # start server
   server = DistributedCrawlerServer(options.port)

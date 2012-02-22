@@ -6,6 +6,17 @@ import httplib2
 import ddc_process
 
 
+class DebugLogRecordFactory():
+
+  def __init__(self):
+    self.default_logrecord_factory = logging.getLogRecordFactory()
+
+  def log(self,*args, **kwargs):
+    record = self.default_logrecord_factory(*args, **kwargs)
+    record.msg = "[CLIENT] %s" % (record.msg)
+    return record
+
+
 class NeedRestartException(Exception):
   pass
 
@@ -126,10 +137,6 @@ class DistributedCrawlerClient():
 
 if __name__ == '__main__':
 
-  # setup logger
-  logger = logging.getLogger()
-  logger.setLevel(logging.DEBUG)
-
   # parse args
   cli_parser = argparse.ArgumentParser()
   cli_parser.add_argument("-s", 
@@ -145,8 +152,28 @@ if __name__ == '__main__':
                           type=int,
                           dest="port",
                           help="Network port to use to communicate with server")
+  cli_parser.add_argument("-v", 
+                          "--verbosity",
+                          action="store",
+                          choices=("quiet","warning","info","debug"),
+                          default="info",
+                          dest="verbosity",
+                          help="Level of output to diplay")
   options = cli_parser.parse_args()
-  
+
+  # setup logger
+  logger = logging.getLogger()
+  if options.verbosity == "quiet":
+    logger.setLevel(logging.CRITICAL+1)
+  elif options.verbosity == "warning":
+    logger.setLevel(logging.WARNING)
+  elif options.verbosity == "info":
+    logger.setLevel(logging.INFO)
+  elif options.verbosity == "debug":
+    logger.setLevel(logging.DEBUG)
+    logrecord_factory = DebugLogRecordFactory()
+    logging.setLogRecordFactory(logrecord_factory.log)
+
   # start client
   client = DistributedCrawlerClient(options.server,options.port)
   client.start()
