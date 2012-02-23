@@ -17,7 +17,7 @@ class DebugLogRecordFactory():
 
 class InvalidRequestException(Exception):
 
-  def __init__(self, url, client, msg, http_code=400):
+  def __init__(self, url, client, msg="", http_code=400):
     self.url = url
     self.client = client
     self.msg = msg
@@ -29,11 +29,20 @@ class InvalidRequestException(Exception):
 
 class PotentiallyMaliciousRequestException(InvalidRequestException):
 
-  def __init__(self, url, client, msg, http_code=403):
-    InvalidRequestException.__init__(url, client, msg, http_code)
+  def __init__(self, url, client, msg):
+    InvalidRequestException.__init__(url, client, msg, 403)
 
   def __str__(self):
     return "Potentially malicious request from %s for url '%s': %s" % (self.client, self.url, self.msg) 
+
+
+class MalformedXmlException(InvalidRequestException):
+
+  def __init__(self, url, client):
+    InvalidRequestException.__init__(url, client)
+
+  def __str__(self):
+    return "Malformed XML received from %s" % (self.client)
 
 
 class XmlMessage:
@@ -227,6 +236,8 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
         # check domainlist signature
         xml_domainlist = xml_post_data.find("domainlist")
+        if xml_domainlist is None:
+          raise MalformedXmlException(self.path,self.client_address[0])
         domainlist_sig = XmlMessage.getXmlDomainListSig(xml_domainlist)
         if xml_domainlist.get("sig") != domainlist_sig[1]:
           raise PotentiallyMaliciousRequestException(self.path,self.client_address[0],"Invalid signature for domainlist")
@@ -298,7 +309,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         # buggy client, crawler, or someone else we don't care about...
         raise InvalidRequestException(self.path,self.client_address[0],"URL not found",404)
 
-    except (PotentiallyMaliciousRequestException, InvalidRequestException) as e:
+    except (MalformedXmlException, PotentiallyMaliciousRequestException, InvalidRequestException) as e:
       logging.getLogger().warning(e)
       self.send_error(e.http_code)
 
