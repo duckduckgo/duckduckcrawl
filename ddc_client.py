@@ -162,6 +162,7 @@ if __name__ == '__main__':
   options = cli_parser.parse_args()
 
   # setup logger
+  logging.basicConfig(format="%(message)s")
   logger = logging.getLogger()
   if options.verbosity == "quiet":
     logger.setLevel(logging.CRITICAL+1)
