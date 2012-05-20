@@ -38,7 +38,7 @@ class DistributedCrawlerClient():
   def __init__(self,server,port):
     self.base_url = "http://%s:%d" % (server,port)
     self.api_base_url = "%s/domains" % (self.base_url)
-  
+
   def start(self,):
     logging.getLogger().info("DuckDuckGo distributed crawler client v%d started" % (__class__.CLIENT_VERSION))
     logging.getLogger().info("Page analysis component v%d loaded" % (ddc_process.VERSION))
@@ -129,8 +129,7 @@ class DistributedCrawlerClient():
     else:
       logging.getLogger().info("Fetching '%s'" % (url) )
       response, content = __class__.http_client.request(url)
-    http_code = int(response["status"])
-    if http_code not in (200, 202):
+    if response.status not in (200, 202):
       raise InvalidServerResponse(http_code)
     return content
 
@@ -139,20 +138,20 @@ if __name__ == '__main__':
 
   # parse args
   cli_parser = argparse.ArgumentParser()
-  cli_parser.add_argument("-s", 
+  cli_parser.add_argument("-s",
                           "--server",
                           action="store",
                           required=True,
                           dest="server",
                           help="Server IP or domain to connect to")
-  cli_parser.add_argument("-p", 
+  cli_parser.add_argument("-p",
                           "--port",
                           action="store",
                           required=True,
                           type=int,
                           dest="port",
                           help="Network port to use to communicate with server")
-  cli_parser.add_argument("-v", 
+  cli_parser.add_argument("-v",
                           "--verbosity",
                           action="store",
                           choices=("quiet","warning","info","debug"),
