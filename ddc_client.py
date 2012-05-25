@@ -130,7 +130,7 @@ class DistributedCrawlerClient():
       logging.getLogger().info("Fetching '%s'" % (url) )
       response, content = __class__.http_client.request(url)
     if response.status not in (200, 202):
-      raise InvalidServerResponse(http_code)
+      raise InvalidServerResponse(response.status)
     return content
 
 
