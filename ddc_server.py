@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse, gzip, hashlib, http.server, logging, os.path, random, string, time, urllib.parse, xml.etree.ElementTree, zlib
+import argparse, gzip, hashlib, hmac, http.server, logging, os.path, random, string, time, urllib.parse, xml.etree.ElementTree, zlib
+
+
+# this is the cecret hashing key and needs to be changed
+HMAC_KEY = bytes.fromhex("28426D33133FB68BFB7E04E069ED503CEC7FE42FBD60DA4FC8BBA4433C9746DF")
 
 
 class DebugLogRecordFactory():
@@ -33,7 +37,7 @@ class PotentiallyMaliciousRequestException(InvalidRequestException):
     InvalidRequestException.__init__(url, client, msg, 403)
 
   def __str__(self):
-    return "Potentially malicious request from %s for url '%s': %s" % (self.client, self.url, self.msg) 
+    return "Potentially malicious request from %s for url '%s': %s" % (self.client, self.url, self.msg)
 
 
 class MalformedXmlException(InvalidRequestException):
@@ -75,7 +79,7 @@ class XmlMessage:
       for i in range(domains_to_send_count):
         domain = random.choice(DistributedCrawlerServer.domains_to_check) # pick a random domain in the list
         xml.etree.ElementTree.SubElement(xml_domain_list,"domain",attrib={"name":domain})
-        logging.getLogger().debug("Picked domain %s to be checked" % (domain) ) 
+        logging.getLogger().debug("Picked domain %s to be checked" % (domain) )
 
       # add a signature, so we can detect a malicious client trying to send fake results for different domains
       sig = __class__.getXmlDomainListSig(xml_domain_list,as_bytes=False)[1]
@@ -89,10 +93,7 @@ class XmlMessage:
 
   @staticmethod
   def getXmlDomainListSig(xml_domain_list,as_bytes=True,as_string=True):
-    # WARNING: to be sure a malicious client can not send fake results for specific domains,
-    # the following hash function needs to be changed and hidden (not in a public repository)
-    # it must be complex and unconventionel (no md5, sha, etc.), so it can not be guessed
-    hasher = hashlib.sha256()
+    hasher = hmac.new(HMAC_KEY,digestmod=hashlib.sha512)
     for domain in xml_domain_list.iterfind("domain"):
       hasher.update(domain.get("name").encode("utf-8"))
     if as_bytes:
@@ -171,7 +172,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
         # generate xml
         xml_response = str(XmlMessage(int(params["version"][0]),int(params["pc_version"][0])))
-        
+
         # prepare response
         raw_response = xml_response.encode("utf-8")
         if "accept-encoding" in self.headers:
@@ -271,10 +272,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         for xml_domain in xml_post_data.iterfind("domainlist/domain"):
           domain = xml_domain.get("name")
           if xml_domain.get("failed") == "1":
-            logging.getLogger().warning("Client failed to check domain '%s'" % (domain) ) 
+            logging.getLogger().warning("Client failed to check domain '%s'" % (domain) )
             # TODO exclude domain if too many clients have fail too check it?
             continue
-          logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) ) 
+          logging.getLogger().debug("Got client analysis for domain '%s'" % (domain) )
           is_spam = (xml_domain.get("spam") == "1")
           if domain in DistributedCrawlerServer.checked_domains:
             # this domain has already been checked by at least another client
@@ -282,7 +283,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             analysis_count = DistributedCrawlerServer.checked_domains[domain][1] +1
             if (previous_is_spam != is_spam) and (analysis_count > 1):
               # differents clients gave different analysis, reset analysis count
-              logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) ) 
+              logging.getLogger().warning("Conflicting client analysis for domain '%s'" % (domain) )
               analysis_count = 0
             else:
               if analysis_count >= DistributedCrawlerServer.MIN_ANALYSIS_PER_DOMAIN:
@@ -293,10 +294,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
                   # ValueError is thrown if the domain is not in the list which can happen if another client has already sent the MIN_ANALYSIS_PER_DOMAIN'th analysis
                   # => we dont't care
                   pass
-              logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%s" % (domain, analysis_count, is_spam) ) 
+              logging.getLogger().debug("Domain '%s' has has been checked %d times, is_spam=%s" % (domain, analysis_count, is_spam) )
           else:
             analysis_count = 1
-            logging.getLogger().debug("Domain '%s' is checked for the first time, is_spam=%s" % (domain, is_spam) ) 
+            logging.getLogger().debug("Domain '%s' is checked for the first time, is_spam=%s" % (domain, is_spam) )
           DistributedCrawlerServer.checked_domains[domain] = (is_spam, analysis_count)
 
         # thanks buddy client!
@@ -349,14 +350,14 @@ if __name__ == "__main__":
 
   # parse args
   cli_parser = argparse.ArgumentParser()
-  cli_parser.add_argument("-p", 
+  cli_parser.add_argument("-p",
                           "--port",
                           action="store",
                           required=True,
                           type=int,
                           dest="port",
                           help="Network port to use to communicate with clients")
-  cli_parser.add_argument("-v", 
+  cli_parser.add_argument("-v",
                           "--verbosity",
                           action="store",
                           choices=("quiet","warning","info","debug"),
